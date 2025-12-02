@@ -1,61 +1,38 @@
-name: Build
-
+name: Build & Deploy GeyserIntegratedPack
 on:
-  workflow_dispatch:
   push:
-    paths-ignore:
-      - '.gitignore'
-      - 'LICENSE'
-      - 'README.md'
+    branches:
+      - 'main'
+  schedule:
+    - cron: '15 3 * * 1'
+  workflow_dispatch:
 
 jobs:
-  build:
+  build-and-deploy:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Setup Gradle
-        uses: GeyserMC/actions/setup-gradle-composite@master
-        with:
-          setup-java_java-version: 21
+      - uses: actions/checkout@v3
 
-      - name: Build and run with Gradle
-        run: ./gradlew run
-      
-      - name: Archive resource pack artifact
-        # See https://github.com/actions/upload-artifact/commits
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
-        if: success()
-        with:
-          name: GeyserIntegratedPack
-          path: GeyserIntegratedPack.mcpack
-          
-      - name: Get Version
-        if: ${{ success() && github.repository == 'GeyserMC/GeyserIntegratedPack' && github.ref_name == 'master' }}
-        id: get-version
+      - name: Install dependencies
+        run: pip install awscli
+
+      - name: Build mcpack
         run: |
-          version=$(cat src/main/resources/integratedpack/manifest.json | jq -r '.header.version | join(".")')
-          echo "VERSION=${version}" >> $GITHUB_OUTPUT
+          mkdir dist
+          cd src/main/resources/integratedpack
+          zip -r ../../../../dist/GeyserIntegratedPack.mcpack ./*
 
-      - name: Get Release Metadata
-        if: ${{ success() && github.repository == 'GeyserMC/GeyserIntegratedPack' && github.ref_name == 'master' }}
-        uses: GeyserMC/actions/release@master
-        id: metadata
-        with:
-          appID: ${{ secrets.RELEASE_APP_ID }}
-          appPrivateKey: ${{ secrets.RELEASE_APP_PK }}
-          files: |
-            geyserintegratedpack:GeyserIntegratedPack.mcpack
-          releaseEnabled: false
-          saveMetadata: true
-          releaseProject: 'geyserintegratedpack'
-          releaseVersion: ${{ steps.get-version.outputs.VERSION }}
+      - name: Deploy to Cloudflare R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CF_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CF_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          PACK_SIZE=$(stat -c%s "dist/GeyserIntegratedPack.mcpack")
 
-      - name: Publish to Downloads API
-        if: ${{ success() && github.repository == 'GeyserMC/GeyserIntegratedPack' && github.ref_name == 'master' }}
-        uses: GeyserMC/actions/upload-release@master
-        with:
-          username: ${{ vars.DOWNLOADS_USERNAME }}
-          privateKey: ${{ secrets.DOWNLOADS_PRIVATE_KEY }}
-          host: ${{ secrets.DOWNLOADS_SERVER_IP }}
-          files: |
-            GeyserIntegratedPack.mcpack
+          aws s3 cp "dist/GeyserIntegratedPack.mcpack" "s3://${{ secrets.CF_R2_BUCKET }}/bedrock-gip/GeyserIntegratedPack.mcpack" \
+            --endpoint-url "https://${{ secrets.CF_ACCOUNT_ID }}.r2.cloudflarestorage.com" \
+            --content-type "application/zip" \
+            --cache-control "public, max-age=31536000"
+
+          echo "Uploaded: GeyserIntegratedPack.mcpack ($PACK_SIZE bytes)"
