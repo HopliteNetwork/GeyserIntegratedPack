@@ -2,7 +2,11 @@ name: Build & Deploy GeyserIntegratedPack
 on:
   push:
     branches:
-      - 'main'
+      - 'master'
+    paths-ignore:
+      - '.gitignore'
+      - 'LICENSE'
+      - 'README.md'
   schedule:
     - cron: '15 3 * * 1'
   workflow_dispatch:
@@ -11,16 +15,16 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Setup Gradle
+        uses: GeyserMC/actions/setup-gradle-composite@master
+        with:
+          setup-java_java-version: 21
 
-      - name: Install dependencies
+      - name: Build with Gradle
+        run: ./gradlew run
+
+      - name: Install AWS CLI
         run: pip install awscli
-
-      - name: Build mcpack
-        run: |
-          mkdir dist
-          cd src/main/resources/integratedpack
-          zip -r ../../../../dist/GeyserIntegratedPack.mcpack ./*
 
       - name: Deploy to Cloudflare R2
         env:
@@ -28,9 +32,9 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.CF_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
         run: |
-          PACK_SIZE=$(stat -c%s "dist/GeyserIntegratedPack.mcpack")
+          PACK_SIZE=$(stat -c%s "GeyserIntegratedPack.mcpack")
 
-          aws s3 cp "dist/GeyserIntegratedPack.mcpack" "s3://${{ secrets.CF_R2_BUCKET }}/bedrock-gip/GeyserIntegratedPack.mcpack" \
+          aws s3 cp "GeyserIntegratedPack.mcpack" "s3://${{ secrets.CF_R2_BUCKET }}/bedrock-gip/GeyserIntegratedPack.mcpack" \
             --endpoint-url "https://${{ secrets.CF_ACCOUNT_ID }}.r2.cloudflarestorage.com" \
             --content-type "application/zip" \
             --cache-control "public, max-age=31536000"
